@@ -17,7 +17,7 @@ The finite-sample behaviour is assessed through an extensive Monte Carlo study
 across seven data-generating processes, 1 000 replications, and four innovation
 distributions.
 
-📄 [Read the full thesis (PDF)](Murugesu_2025_HybridLikelihood.pdf)
+📄 [Read the full thesis (PDF)](Master_Thesis_Akshaan_Murugesu.pdf)
 
 ---
 
