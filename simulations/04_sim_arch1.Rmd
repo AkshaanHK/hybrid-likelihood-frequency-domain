@@ -1,0 +1,144 @@
+---
+title: "Simulation Study — AR(1) with ARCH(1) Volatility"
+author: "Akshaan Murugesu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.height = 4, fig.width = 6)
+```
+
+```{r libraries}
+library(parallel)
+library(pracma)
+ncores <- max(1, detectCores() - 1)
+```
+
+```{r source}
+source(here::here("R", "01_core_estimators.R"))
+source(here::here("R", "02_dgm.R"))
+source(here::here("R", "03_drivers.R"))
+source(here::here("R", "04_summary_tables.R"))
+```
+
+## Simulation design
+
+AR(1)–ARCH(1) model: X_t = phi * X_{t-1} + sigma_t * z_t,
+sigma_t^2 = alpha0 + alpha1 * X_{t-1}^2, with (alpha0, alpha1) = (0.5, 0.4).
+
+```{r params}
+set.seed(2025)
+
+nsim        <- 1000
+phi_true    <- 0.4
+alpha0      <- 0.5
+alpha1      <- 0.4
+n_values    <- c(50, 75, 100, 200, 300)
+alpha_grid  <- seq(0, 1, by = 0.05)
+innovations <- c("gaussian", "t5", "chisq5", "exp1")
+rds_file    <- here::here("outputs", "results_arch1.rds")
+```
+
+```{r run-or-load}
+if (file.exists(rds_file)) {
+  results_arch1 <- readRDS(rds_file)
+  message("Loaded cached results from ", rds_file)
+} else {
+  results_arch1 <- setNames(vector("list", length(innovations)), innovations)
+  for (innov in innovations) {
+    results_arch1[[innov]] <- list()
+    for (n in n_values) {
+      cat("AR(1)-ARCH(1) |", innov, "| n =", n, "\n")
+      results_arch1[[innov]][[as.character(n)]] <- run_hybrid_grid_arch(
+        n = n, nsim = nsim, phi_true = phi_true,
+        alpha_grid = alpha_grid, innov = innov,
+        alpha0 = alpha0, alpha1 = alpha1, ncores = ncores
+      )
+    }
+  }
+  saveRDS(results_arch1, rds_file)
+  message("Results saved to ", rds_file)
+}
+```
+
+## Plotting helpers
+
+```{r helpers}
+pretty_innov_expr <- function(innov) {
+  switch(innov,
+    gaussian = quote(N(0,1)), t5 = quote(t[5]),
+    chisq5   = quote(chi^2[5]), exp1 = quote(Exp(1)), as.name(innov))
+}
+add_headroom <- function(ylim, pct = 0.05) {
+  ylim[2] <- ylim[2] + pct * diff(ylim); ylim
+}
+```
+
+## Plots
+
+```{r plots}
+for (innov in names(results_arch1)) {
+  innov_lab <- pretty_innov_expr(innov)
+  for (n in n_values) {
+    res        <- results_arch1[[innov]][[as.character(n)]]
+    hybrid_mat <- res$hybrid
+    whittle    <- res$whittle
+    fdel       <- res$fdel
+
+    rmse_alpha <- apply(hybrid_mat, 2, rmse, true = phi_true)
+    interior   <- alpha_grid > 0 & alpha_grid < 1
+    idx_best   <- which(interior)[which.min(rmse_alpha[interior])]
+    alpha_best <- alpha_grid[idx_best]
+    hyb_best   <- hybrid_mat[, idx_best]
+
+    ## ---- RMSE curve --------------------------------------------------------
+    plot(alpha_grid, rmse_alpha, type = "l", lwd = 2, col = "blue",
+         xlab = expression(alpha), ylab = "RMSE",
+         ylim = add_headroom(range(rmse_alpha, na.rm = TRUE)),
+         main = bquote("RMSE vs" ~ alpha ~ "| AR(1)–ARCH(1)" * "\n" *
+                       T == .(n) ~ ", innovations" ~ .(innov_lab)))
+    grid(col = "grey90", lty = "dotted")
+    points(0, rmse_alpha[alpha_grid == 0], pch = 19, col = "darkgreen")
+    points(1, rmse_alpha[alpha_grid == 1], pch = 19, col = "purple")
+    text(0, rmse_alpha[alpha_grid == 0], "FDEL",    pos = 3, cex = 0.7, xpd = NA)
+    text(1, rmse_alpha[alpha_grid == 1], "Whittle", pos = 3, cex = 0.7, xpd = NA)
+    abline(v = alpha_best, col = "red", lty = 2)
+    text(alpha_best, min(rmse_alpha, na.rm = TRUE),
+         bquote(alpha["best"] == .(alpha_best)), pos = 4, cex = 0.7)
+
+    ## ---- Boxplots ----------------------------------------------------------
+    lab_expr <- eval(bquote(expression(
+      Whittle, FDEL, Hybrid ~ alpha == .(round(alpha_best, 2)))))
+    boxplot(list(Whittle = whittle, FDEL = fdel, Hybrid = hyb_best),
+            main = bquote("AR(1)–ARCH(1), T =" ~ .(n) ~
+                          ", innovations" ~ .(innov_lab)),
+            ylab = expression(hat(phi)),
+            col  = c("purple", "darkgreen", "blue"),
+            names = rep("", 3), xaxt = "n")
+    abline(h = phi_true, col = "red", lwd = 2, lty = 2)
+    axis(1, at = 1:3, labels = lab_expr, tick = FALSE)
+  }
+}
+```
+
+## Summary tables
+
+```{r table}
+big_table_arch1 <- make_big_table_arch1(results_arch1, phi_true = phi_true)
+print(big_table_arch1)
+```
+
+```{r latex, results='asis'}
+to_latex_table_arch1(
+  big_table_arch1,
+  caption = paste0("Bias, SD and RMSE of Whittle, FDEL and Hybrid estimators for",
+                   " AR(1)--ARCH(1) with $\\phi_0=0.4$, $(\\alpha_0,\\alpha_1)=(0.5,0.4)$",
+                   " under different innovations.")
+)
+```

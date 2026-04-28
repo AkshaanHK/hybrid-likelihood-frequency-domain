@@ -1,0 +1,242 @@
+---
+title: "Simulation Study — AR(2) DGM, AR(1) Fit (Model Misspecification)"
+author: "Akshaan Murugesu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.height = 4, fig.width = 6)
+```
+
+```{r libraries}
+library(parallel)
+library(pracma)
+ncores <- max(1, detectCores() - 1)
+```
+
+```{r source}
+source(here::here("R", "01_core_estimators.R"))
+source(here::here("R", "02_dgm.R"))
+source(here::here("R", "03_drivers.R"))
+source(here::here("R", "04_summary_tables.R"))
+```
+
+## Simulation design
+
+Data are generated from a stationary AR(2) with (phi1, phi2) = (0.6, -0.3).
+An AR(1) model is deliberately fitted. Performance is evaluated via the
+spectral distance D(theta_hat) = integral |f_true(omega) - f_fit(omega)| d omega.
+
+```{r params}
+set.seed(2025)
+
+nsim        <- 1000
+phi1_true   <- 0.6
+phi2_true   <- -0.3
+n_values    <- c(50, 75, 100, 200, 300)
+alpha_grid  <- seq(0, 1, by = 0.05)
+innovations <- c("gaussian", "t5", "chisq5", "exp1")
+rds_file    <- here::here("outputs", "results_ar2_misspec.rds")
+```
+
+```{r run-or-load}
+if (file.exists(rds_file)) {
+  results_all_misspec <- readRDS(rds_file)
+  message("Loaded cached results from ", rds_file)
+} else {
+  results_all_misspec <- setNames(vector("list", length(innovations)), innovations)
+  for (innov in innovations) {
+    results_all_misspec[[innov]] <- list()
+    for (n in n_values) {
+      cat("AR(2)->AR(1) |", innov, "| n =", n, "\n")
+      results_all_misspec[[innov]][[as.character(n)]] <-
+        run_hybrid_grid_ar2_misspec(
+          n = n, nsim = nsim,
+          phi1_true = phi1_true, phi2_true = phi2_true,
+          alpha_grid = alpha_grid, innov = innov, ncores = ncores
+        )
+    }
+  }
+  saveRDS(results_all_misspec, rds_file)
+  message("Results saved to ", rds_file)
+}
+```
+
+## Plotting helpers
+
+```{r helpers}
+pretty_innov_expr <- function(innov) {
+  switch(innov,
+    gaussian = quote(N(0,1)), t5 = quote(t[5]),
+    chisq5   = quote(chi^2[5]), exp1 = quote(Exp(1)), as.name(innov))
+}
+add_headroom <- function(ylim, pct = 0.05) {
+  ylim[2] <- ylim[2] + pct * diff(ylim); ylim
+}
+```
+
+## Spectral distance curves and boxplots
+
+```{r plots}
+opar <- par(cex.main = 0.95, mar = c(5, 5, 7.2, 2) + 0.1)
+
+for (innov in names(results_all_misspec)) {
+  innov_lab <- pretty_innov_expr(innov)
+  for (n in n_values) {
+    res          <- results_all_misspec[[innov]][[as.character(n)]]
+    dist_hybrid  <- res$dist_hybrid
+    dist_whittle <- res$dist_whittle
+    dist_fdel    <- res$dist_fdel
+
+    mean_dist <- colMeans(dist_hybrid, na.rm = TRUE)
+    interior  <- alpha_grid > 0 & alpha_grid < 1
+    idx_best  <- which(interior)[which.min(mean_dist[interior])]
+    a_best    <- alpha_grid[idx_best]
+    d_best    <- dist_hybrid[, idx_best]
+
+    ## ---- Mean spectral distance curve --------------------------------------
+    plot(alpha_grid, mean_dist, type = "l", lwd = 2, col = "blue",
+         xlab = expression(alpha), ylab = "Mean spectral distance",
+         ylim = add_headroom(range(mean_dist, na.rm = TRUE)),
+         main = "")
+    mtext("Mean spectral distance vs alpha", side = 3, line = 5.2, cex = 1.05)
+    mtext(bquote("AR(2)" %->% "AR(1), T =" ~ .(n) ~ ", innovations" ~ .(innov_lab)),
+          side = 3, line = 4.0, cex = 1.05)
+    grid(col = "grey90", lty = "dotted")
+    abline(h = mean(dist_whittle, na.rm = TRUE), col = "purple", lty = 2, lwd = 2)
+    abline(h = mean(dist_fdel,    na.rm = TRUE), col = "darkgreen", lty = 2, lwd = 2)
+    abline(v = a_best, col = "red", lty = 2)
+    text(a_best, min(mean_dist, na.rm = TRUE),
+         bquote(alpha["best"] == .(a_best)), pos = 4, cex = 0.7)
+    legend("topright",
+           legend = c("Hybrid", "Whittle", "FDEL"),
+           col    = c("blue", "purple", "darkgreen"),
+           lty    = c(1, 2, 2), lwd = 2, bty = "n")
+
+    ## ---- Boxplots of spectral distances ------------------------------------
+    lab_expr <- eval(bquote(expression(
+      Whittle, FDEL, Hybrid ~ alpha == .(round(a_best, 2)))))
+    boxplot(list(Whittle = dist_whittle, FDEL = dist_fdel, Hybrid = d_best),
+            main = "",
+            ylab = "Spectral distance",
+            col  = c("purple", "darkgreen", "blue"),
+            names = rep("", 3), xaxt = "n",
+            outline = FALSE)
+    mtext("Spectral distance distributions", side = 3, line = 5.2, cex = 1.05)
+    mtext(bquote("AR(2)" %->% "AR(1), T =" ~ .(n) ~ ", innovations" ~ .(innov_lab)),
+          side = 3, line = 4.0, cex = 1.05)
+    axis(1, at = 1:3, labels = lab_expr, tick = FALSE)
+  }
+}
+
+par(opar)
+```
+
+## Mean fitted spectral densities (t5, T = 50 — Figure 4.11 in thesis)
+
+```{r spectral-density-plot, fig.height=5, fig.width=7}
+set.seed(2025)
+
+innov_case <- "t5"
+n_case     <- 50
+
+res_case        <- results_all_misspec[[innov_case]][[as.character(n_case)]]
+mean_dist_alpha <- colMeans(res_case$dist_hybrid, na.rm = TRUE)
+interior        <- res_case$alpha_grid > 0 & res_case$alpha_grid < 1
+alpha_star      <- res_case$alpha_grid[interior][
+                     which.min(mean_dist_alpha[interior])]
+
+cat("oracle alpha* =", alpha_star, "\n")
+
+omega_grid <- seq(0, pi, length.out = 2000)
+G          <- length(omega_grid)
+F_wh       <- matrix(NA_real_, nsim, G)
+F_fd       <- matrix(NA_real_, nsim, G)
+F_hy       <- matrix(NA_real_, nsim, G)
+
+for (s in seq_len(nsim)) {
+  Y     <- simulate_ar2_innov(n = n_case, phi1 = phi1_true, phi2 = phi2_true,
+                              innov = innov_case)
+  Iper  <- per(Y)
+  omega <- freq(Y)
+
+  phi_wh <- tryCatch(
+    optim(0.1, obj_Whittle, Iper = Iper, omega = omega,
+          method = "L-BFGS-B", lower = -0.9, upper = 0.9)$par,
+    error = function(e) NA_real_)
+  phi_fd <- tryCatch(
+    optim(0.1, obj_FDEL, Iper = Iper, omega = omega,
+          method = "L-BFGS-B", lower = -0.9, upper = 0.9)$par,
+    error = function(e) NA_real_)
+  phi_hy <- tryCatch(
+    estimate_hybrid_once(alpha_star, Iper, omega, start = phi_wh),
+    error = function(e) NA_real_)
+
+  if (is.finite(phi_wh)) F_wh[s, ] <- spectral(c(phi_wh), p = 1, q = 0, x = omega_grid)
+  if (is.finite(phi_fd)) F_fd[s, ] <- spectral(c(phi_fd), p = 1, q = 0, x = omega_grid)
+  if (is.finite(phi_hy)) F_hy[s, ] <- spectral(c(phi_hy), p = 1, q = 0, x = omega_grid)
+}
+
+f_wh_avg <- colMeans(F_wh, na.rm = TRUE)
+f_fd_avg <- colMeans(F_fd, na.rm = TRUE)
+f_hy_avg <- colMeans(F_hy, na.rm = TRUE)
+f_true   <- spectral(c(phi1_true, phi2_true), p = 2, q = 0, x = omega_grid)
+
+title_expr <- bquote(atop(
+  "Mean fitted spectral densities",
+  "AR(2): " * phi[1] == .(phi1_true) * ", " * phi[2] == .(phi2_true) *
+  ", fit AR(1), " * t[5] * " innovations, T = " * .(n_case)))
+
+## Full scale
+par(mar = c(5, 5, 4.8, 2) + 0.1)
+ylim_full <- range(c(f_true, f_wh_avg, f_fd_avg, f_hy_avg), finite = TRUE)
+plot(omega_grid, f_fd_avg, type = "l", lwd = 2, col = "darkgreen",
+     ylim = ylim_full, xlab = expression(omega), ylab = expression(f(omega)),
+     main = title_expr)
+lines(omega_grid, f_wh_avg, col = "purple", lwd = 2, lty = 2)
+lines(omega_grid, f_hy_avg, col = "blue",   lwd = 2, lty = 3)
+lines(omega_grid, f_true,   col = "black",  lwd = 2, lty = 1)
+legend("topright",
+       legend = c("Whittle (mean)", "FDEL (mean)",
+                  bquote("Hybrid (mean), " * alpha^"*" == .(alpha_star)),
+                  "True AR(2)"),
+       col = c("purple", "darkgreen", "blue", "black"),
+       lty = c(2, 1, 3, 1), lwd = 2, bty = "n", cex = 0.9)
+
+## Zoomed (y-axis capped at 2 to match thesis figure)
+plot(omega_grid, f_fd_avg, type = "l", lwd = 2, col = "darkgreen",
+     ylim = c(0, 2), xlab = expression(omega), ylab = expression(f(omega)),
+     main = title_expr)
+lines(omega_grid, f_wh_avg, col = "purple", lwd = 2, lty = 2)
+lines(omega_grid, f_hy_avg, col = "blue",   lwd = 2, lty = 3)
+lines(omega_grid, f_true,   col = "black",  lwd = 2, lty = 1)
+legend("topright",
+       legend = c("Whittle (mean)", "FDEL (mean)",
+                  bquote("Hybrid (mean), " * alpha^"*" == .(alpha_star)),
+                  "True AR(2)"),
+       col = c("purple", "darkgreen", "blue", "black"),
+       lty = c(2, 1, 3, 1), lwd = 2, bty = "n", cex = 0.9)
+```
+
+## Summary tables
+
+```{r table}
+big_table_misspec <- make_big_table_ar2_misspec(results_all_misspec)
+print(big_table_misspec)
+```
+
+```{r latex, results='asis'}
+to_latex_table_ar2_misspec(
+  big_table_misspec,
+  caption = paste0("Mean spectral distance between the true AR(2) spectrum with",
+                   " $(\\phi_{1,0},\\phi_{2,0})=(0.6,-0.3)$ and the fitted AR(1)",
+                   " spectrum for Whittle, FDEL and Hybrid estimators under",
+                   " different innovations.")
+)
+```

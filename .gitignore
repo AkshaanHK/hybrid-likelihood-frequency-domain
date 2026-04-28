@@ -1,0 +1,21 @@
+# R outputs and caches
+outputs/
+*.rds
+*.RData
+*.Rhistory
+
+# knitr / rmarkdown artefacts
+*_cache/
+*_files/
+*.html
+
+# RStudio project files (keep the .Rproj itself but ignore user state)
+.Rproj.user/
+*.Rproj.user
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Derivative plots folder created by Rmd
+derivative_plots_ar1_gaussian_n50/

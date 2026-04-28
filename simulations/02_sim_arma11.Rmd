@@ -1,0 +1,218 @@
+---
+title: "Simulation Study — ARMA(1,1)"
+author: "Akshaan Murugesu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.height = 4, fig.width = 6)
+```
+
+```{r libraries}
+library(parallel)
+library(pracma)
+ncores <- max(1, detectCores() - 1)
+```
+
+```{r source}
+source(here::here("R", "01_core_estimators.R"))
+source(here::here("R", "02_dgm.R"))
+source(here::here("R", "03_drivers.R"))
+source(here::here("R", "04_summary_tables.R"))
+```
+
+## Simulation design
+
+```{r params}
+set.seed(2025)
+
+nsim        <- 1000
+phi_true    <- 0.2
+theta_true  <- 0.4
+n_values    <- c(50, 75, 100, 200, 300)
+alpha_grid  <- seq(0, 1, by = 0.05)
+innovations <- c("gaussian", "t5", "chisq5", "exp1")
+rds_file    <- here::here("outputs", "results_arma11.rds")
+```
+
+```{r run-or-load}
+if (file.exists(rds_file)) {
+  results_arma11 <- readRDS(rds_file)
+  message("Loaded cached results from ", rds_file)
+} else {
+  results_arma11 <- setNames(vector("list", length(innovations)), innovations)
+  for (innov in innovations) {
+    results_arma11[[innov]] <- list()
+    for (n in n_values) {
+      cat("ARMA(1,1) |", innov, "| n =", n, "\n")
+      results_arma11[[innov]][[as.character(n)]] <- run_hybrid_grid_arma11(
+        n = n, nsim = nsim,
+        phi_true = phi_true, theta_true = theta_true,
+        alpha_grid = alpha_grid, innov = innov, ncores = ncores
+      )
+    }
+  }
+  saveRDS(results_arma11, rds_file)
+  message("Results saved to ", rds_file)
+}
+```
+
+## Plotting helpers
+
+```{r helpers}
+pretty_innov_expr <- function(innov) {
+  switch(innov,
+    gaussian = quote(N(0,1)), t5 = quote(t[5]),
+    chisq5   = quote(chi^2[5]), exp1 = quote(Exp(1)), as.name(innov))
+}
+add_headroom <- function(ylim, pct = 0.05) {
+  ylim[2] <- ylim[2] + pct * diff(ylim); ylim
+}
+add_yaxis_5dec <- function() {
+  yt <- axTicks(2); axis(2, at = yt, labels = sprintf("%.5f", yt))
+}
+```
+
+## Plots: summed RMSE, functional boxplots, boxplots
+
+```{r plots}
+col_curve   <- "blue"
+col_whittle <- "purple"
+col_fdel    <- "darkgreen"
+
+for (innov in names(results_arma11)) {
+  innov_lab <- pretty_innov_expr(innov)
+  for (n in n_values) {
+    res        <- results_arma11[[innov]][[as.character(n)]]
+    phi_wh     <- res$phi_wh;    theta_wh  <- res$theta_wh
+    phi_fd     <- res$phi_fd;    theta_fd  <- res$theta_fd
+    phi_hyb    <- res$phi_hyb;   theta_hyb <- res$theta_hyb
+    alpha_grid_l <- res$alpha_grid
+
+    rmse_sum_alpha <- apply(phi_hyb, 2, rmse, true = phi_true) +
+                      apply(theta_hyb, 2, rmse, true = theta_true)
+    interior   <- alpha_grid_l > 0 & alpha_grid_l < 1
+    idx_best   <- which(interior)[which.min(rmse_sum_alpha[interior])]
+    alpha_best <- alpha_grid_l[idx_best]
+    phi_best   <- phi_hyb[,   idx_best]
+    th_best    <- theta_hyb[, idx_best]
+
+    ## ---- Summed RMSE curve -------------------------------------------------
+    plot(alpha_grid_l, rmse_sum_alpha, type = "l", lwd = 2, col = col_curve,
+         xlab = expression(alpha),
+         ylab = expression(RMSE[phi] + RMSE[theta]),
+         ylim = add_headroom(range(rmse_sum_alpha, na.rm = TRUE)),
+         yaxt = "n",
+         main = bquote(atop(
+           "Summed RMSE(" * hat(phi) + "," * hat(theta) * ") for ARMA(1,1)",
+           T == .(n) ~ ", innovations" ~ .(innov_lab))))
+    grid(col = "grey90", lty = "dotted")
+    add_yaxis_5dec()
+    abline(v = alpha_best, col = "red", lty = 2, lwd = 2)
+    text(alpha_best, min(rmse_sum_alpha),
+         bquote(alpha["best"] == .(round(alpha_best, 2))), pos = 4, cex = 0.7)
+    points(0, rmse_sum_alpha[alpha_grid_l == 0], pch = 19, col = col_fdel)
+    points(1, rmse_sum_alpha[alpha_grid_l == 1], pch = 19, col = col_whittle)
+    text(0, rmse_sum_alpha[alpha_grid_l == 0], "FDEL",    pos = 3, cex = 0.7, xpd = NA)
+    text(1, rmse_sum_alpha[alpha_grid_l == 1], "Whittle", pos = 3, cex = 0.7, xpd = NA)
+
+    ## ---- Functional boxplots for phi and theta -----------------------------
+    for (param_info in list(
+      list(mat = phi_hyb,   true_val = phi_true,   ylab = expression(hat(phi)),
+           label = "phi"),
+      list(mat = theta_hyb, true_val = theta_true, ylab = expression(hat(theta)),
+           label = "theta")
+    )) {
+      sq   <- apply(param_info$mat, 2, quantile, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
+      q25  <- sq[1, ]; q50 <- sq[2, ]; q75 <- sq[3, ]
+      ylim <- range(q25, q75, param_info$true_val, na.rm = TRUE)
+
+      plot(alpha_grid_l, q50, type = "n", ylim = ylim,
+           xlim = c(min(alpha_grid_l) - 0.02, max(alpha_grid_l) + 0.02),
+           xlab = expression(alpha), ylab = param_info$ylab,
+           main = bquote(atop(
+             "Hybrid" ~ .(as.name(param_info$label)) ~ "across" ~ alpha ~ "for ARMA(1,1)",
+             T == .(n) ~ ", innovations" ~ .(innov_lab))))
+      grid(col = "grey90", lty = "dotted")
+      polygon(c(alpha_grid_l, rev(alpha_grid_l)), c(q25, rev(q75)),
+              col = adjustcolor("lightblue", 0.5), border = NA)
+      lines(alpha_grid_l, q25, col = col_curve, lwd = 1.5, lty = 2)
+      lines(alpha_grid_l, q75, col = col_curve, lwd = 1.5, lty = 2)
+      lines(alpha_grid_l, q50, col = col_curve, lwd = 2)
+      abline(h = param_info$true_val, col = "red", lty = 2, lwd = 2)
+      legend("topleft",
+             legend = c("Median", "25–75% band",
+                        if (param_info$label == "phi") expression(phi[true])
+                        else expression(theta[true])),
+             lty = c(1, NA, 2), lwd = c(2, NA, 2),
+             pch = c(NA, 15, NA), pt.cex = c(NA, 2, NA),
+             col = c(col_curve, adjustcolor("lightblue", 0.5), "red"), bty = "n")
+    }
+
+    ## ---- Boxplots for phi and theta ----------------------------------------
+    lab_expr <- eval(bquote(expression(
+      Whittle, FDEL, Hybrid ~ alpha == .(round(alpha_best, 2)))))
+
+    for (bp_info in list(
+      list(wh = phi_wh, fd = phi_fd, best = phi_best,
+           true_val = phi_true, ylab = expression(hat(phi)),
+           label = "phi"),
+      list(wh = theta_wh, fd = theta_fd, best = th_best,
+           true_val = theta_true, ylab = expression(hat(theta)),
+           label = "theta")
+    )) {
+      boxplot(list(Whittle = bp_info$wh, FDEL = bp_info$fd, Hybrid = bp_info$best),
+              main = bquote(atop(
+                "Estimators of" ~ .(as.name(bp_info$label)) ~ "for ARMA(1,1)",
+                T == .(n) ~ ", innovations" ~ .(innov_lab) ~
+                  "," ~ alpha["best"] == .(round(alpha_best, 2)))),
+              ylab = bp_info$ylab,
+              col  = c(col_whittle, col_fdel, col_curve),
+              names = rep("", 3), xaxt = "n")
+      abline(h = bp_info$true_val, col = "red", lwd = 2, lty = 2)
+      axis(1, at = 1:3, labels = lab_expr, tick = FALSE)
+    }
+
+    ## ---- Summed RMSE barplot -----------------------------------------------
+    rmse_sum_vec <- c(
+      Whittle = rmse(phi_wh, phi_true) + rmse(theta_wh, theta_true),
+      FDEL    = rmse(phi_fd, phi_true) + rmse(theta_fd, theta_true),
+      Hybrid  = rmse(phi_best, phi_true) + rmse(th_best, theta_true)
+    )
+    bp <- barplot(rmse_sum_vec,
+                  main = bquote(atop(
+                    "Summed RMSE for ARMA(1,1)",
+                    T == .(n) ~ ", innovations" ~ .(innov_lab) ~
+                      "," ~ alpha["best"] == .(round(alpha_best, 2)))),
+                  ylab = expression(RMSE[phi] + RMSE[theta]),
+                  ylim = c(0, max(rmse_sum_vec) * 1.25),
+                  col  = c(col_whittle, col_fdel, col_curve),
+                  names.arg = rep("", 3), xaxt = "n")
+    text(bp, rmse_sum_vec, labels = round(rmse_sum_vec, 4), pos = 3, cex = 0.8)
+    axis(1, at = bp, labels = lab_expr, tick = FALSE)
+
+  }
+}
+```
+
+## Summary tables
+
+```{r table}
+big_table_arma11 <- make_big_table_arma11(results_arma11)
+print(big_table_arma11)
+```
+
+```{r latex, results='asis'}
+to_latex_table_arma(
+  big_table_arma11,
+  caption = paste0("Bias, SD and RMSE for $\\phi$ and $\\theta$ and summed RMSE of",
+                   " Whittle, FDEL and Hybrid estimators for ARMA(1,1) with",
+                   " $(\\phi_0,\\theta_0)=(0.2,0.4)$ under different innovations.")
+)
+```

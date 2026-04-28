@@ -1,0 +1,152 @@
+---
+title: "Simulation Study — AR(1) with Skewed Heavy-Tailed Innovations"
+author: "Akshaan Murugesu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.height = 4, fig.width = 6)
+```
+
+```{r libraries}
+library(parallel)
+library(pracma)
+ncores <- max(1, detectCores() - 1)
+```
+
+```{r source}
+source(here::here("R", "01_core_estimators.R"))
+source(here::here("R", "02_dgm.R"))
+source(here::here("R", "03_drivers.R"))
+source(here::here("R", "04_summary_tables.R"))
+```
+
+## Simulation design
+
+Split-t innovations: positive tail scaled by a = 1.6, negative by b = 0.8,
+df = 5. After skewing, innovations are centred and scaled to mean 0, var ≈ 1.
+
+```{r params}
+set.seed(2025)
+
+nsim       <- 1000
+phi_true   <- 0.4
+n_values   <- c(50, 75, 100, 200, 300)
+alpha_grid <- seq(0, 1, by = 0.05)
+df         <- 5
+a_skew     <- 1.6
+b_skew     <- 0.8
+rds_file   <- here::here("outputs", "results_ar1_skewt.rds")
+```
+
+```{r run-or-load}
+if (file.exists(rds_file)) {
+  results_ar1_skewt <- readRDS(rds_file)
+  message("Loaded cached results from ", rds_file)
+} else {
+  results_ar1_skewt <- list()
+  for (n in n_values) {
+    cat("AR(1) skewt | n =", n, "\n")
+    results_ar1_skewt[[as.character(n)]] <- run_hybrid_grid_ar1_skewt(
+      n = n, nsim = nsim, phi_true = phi_true,
+      alpha_grid = alpha_grid,
+      df = df, a = a_skew, b = b_skew,
+      ncores = ncores
+    )
+  }
+  saveRDS(results_ar1_skewt, rds_file)
+  message("Results saved to ", rds_file)
+}
+```
+
+## Plots
+
+```{r plots}
+add_headroom <- function(ylim, pct = 0.05) {
+  ylim[2] <- ylim[2] + pct * diff(ylim); ylim
+}
+
+for (n in n_values) {
+  res        <- results_ar1_skewt[[as.character(n)]]
+  hybrid_mat <- res$hybrid
+  whittle    <- res$whittle
+  fdel       <- res$fdel
+
+  rmse_alpha <- apply(hybrid_mat, 2, rmse, true = phi_true)
+  interior   <- alpha_grid > 0 & alpha_grid < 1
+  idx_best   <- which(interior)[which.min(rmse_alpha[interior])]
+  alpha_best <- alpha_grid[idx_best]
+  hyb_best   <- hybrid_mat[, idx_best]
+
+  ## ---- Functional boxplot --------------------------------------------------
+  sq  <- apply(hybrid_mat, 2, quantile, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
+  plot(alpha_grid, sq[2, ], type = "n",
+       ylim = range(sq[1,], sq[3,], phi_true, na.rm = TRUE),
+       xlim = c(min(alpha_grid) - 0.02, max(alpha_grid) + 0.02),
+       xlab = expression(alpha), ylab = expression(hat(phi)),
+       main = bquote("Hybrid estimator, AR(1) split-t, T =" ~ .(n)))
+  grid(col = "grey90", lty = "dotted")
+  polygon(c(alpha_grid, rev(alpha_grid)), c(sq[1,], rev(sq[3,])),
+          col = adjustcolor("lightblue", 0.5), border = NA)
+  lines(alpha_grid, sq[1,], col = "blue", lwd = 1.5, lty = 2)
+  lines(alpha_grid, sq[3,], col = "blue", lwd = 1.5, lty = 2)
+  lines(alpha_grid, sq[2,], col = "blue", lwd = 2)
+  abline(h = phi_true, col = "red", lty = 2, lwd = 2)
+  legend("topleft",
+         legend = c("Median", "25–75% band", expression(phi[true])),
+         lty = c(1, NA, 2), lwd = c(2, NA, 2),
+         pch = c(NA, 15, NA), pt.cex = c(NA, 2, NA),
+         col = c("blue", adjustcolor("lightblue", 0.5), "red"), bty = "n")
+
+  ## ---- RMSE curve ----------------------------------------------------------
+  plot(alpha_grid, rmse_alpha, type = "l", lwd = 2, col = "blue",
+       xlab = expression(alpha), ylab = "RMSE",
+       ylim = add_headroom(range(rmse_alpha, na.rm = TRUE)),
+       main = bquote("RMSE vs" ~ alpha ~ "| AR(1) split-t, T =" ~ .(n)))
+  grid(col = "grey90", lty = "dotted")
+  points(0, rmse_alpha[alpha_grid == 0], pch = 19, col = "darkgreen")
+  points(1, rmse_alpha[alpha_grid == 1], pch = 19, col = "purple")
+  text(0, rmse_alpha[alpha_grid == 0], "FDEL",    pos = 3, cex = 0.7, xpd = NA)
+  text(1, rmse_alpha[alpha_grid == 1], "Whittle", pos = 3, cex = 0.7, xpd = NA)
+  abline(v = alpha_best, col = "red", lty = 2)
+  text(alpha_best, min(rmse_alpha, na.rm = TRUE),
+       bquote(alpha["best"] == .(alpha_best)), pos = 4, cex = 0.7)
+
+  ## ---- Boxplots ------------------------------------------------------------
+  lab_expr <- eval(bquote(expression(
+    Whittle, FDEL, Hybrid ~ alpha == .(round(alpha_best, 2)))))
+  boxplot(list(Whittle = whittle, FDEL = fdel, Hybrid = hyb_best),
+          main = bquote("AR(1) split-t, T =" ~ .(n)),
+          ylab = expression(hat(phi)),
+          col  = c("purple", "darkgreen", "blue"),
+          names = rep("", 3), xaxt = "n")
+  abline(h = phi_true, col = "red", lwd = 2, lty = 2)
+  axis(1, at = 1:3, labels = lab_expr, tick = FALSE)
+}
+```
+
+## Summary tables
+
+The skewed-t results use the same `make_big_table_ar1` function,
+wrapping the single-innovation list in a named list for compatibility.
+
+```{r table}
+results_skewt_wrap <- list("skewed-t" = results_ar1_skewt)
+big_table_skewt    <- make_big_table_ar1(results_skewt_wrap, phi_true = phi_true)
+print(big_table_skewt)
+```
+
+```{r latex, results='asis'}
+to_latex_table_ar1(
+  big_table_skewt,
+  caption = paste0("Bias, SD and RMSE of Whittle, FDEL and Hybrid estimators for",
+                   " AR(1) with $\\phi_0=0.4$ under skewed heavy-tailed innovations",
+                   " (split-$t$ with $\\nu=5$, $a=1.6$, $b=0.8$).")
+)
+```
