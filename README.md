@@ -1,156 +1,187 @@
-# Hybrid Likelihood Methods in the Frequency Domain for Time Series Estimation
-
-**Master Thesis — Akshaan Murugesu (21-327-671)**  
-University of Geneva — Supervisors: Prof. Davide La Vecchia and Manon Felix
-
----
+# Hybrid Likelihood for Frequency-Domain Time Series Estimation
 
 ## Overview
 
-This repository contains the R code for the Monte Carlo simulation study in the
-thesis. The study evaluates a **Hybrid Likelihood estimator** that interpolates
-between the **Whittle parametric likelihood** and the **Frequency-Domain
-Empirical Likelihood (FDEL)** through a tuning parameter α ∈ [0, 1]:
+This project proposes and evaluates a **Hybrid Likelihood estimator** for stationary
+time series in the frequency domain. The estimator interpolates between the
+**Whittle parametric likelihood** and the **Frequency-Domain Empirical Likelihood
+(FDEL)** through a tuning parameter α ∈ [0, 1]:
 
-ℓ_HL(θ; α) = α · ℓ_WL(θ) + (1 − α) · ℓ_EL(θ)
+> ℓ\_HL(θ; α) = α · ℓ\_Whittle(θ) + (1 − α) · ℓ\_FDEL(θ)
 
-The simulations cover seven data-generating mechanisms:
-1. AR(1) — Gaussian and non-Gaussian innovations
-2. ARMA(1,1) — multiple innovation distributions
-3. ARFIMA(1, d, 0) — long-memory processes (d = 0.1 and d = 0.4)
-4. AR(1)–ARCH(1) — conditional heteroskedasticity
-5. AR(1) with additive outliers — 5% contamination
-6. AR(1) with skewed heavy-tailed innovations — split-t distribution
-7. AR(2) DGM, AR(1) fit — model misspecification
+- α = 1 → pure Whittle (parametric, efficient under correct specification)
+- α = 0 → pure FDEL (nonparametric, robust but unstable in small samples)
+- α ∈ (0, 1) → hybrid combining both
+
+The finite-sample behaviour is assessed through an extensive Monte Carlo study
+across seven data-generating processes, 1 000 replications, and four innovation
+distributions.
+
+📄 [Read the full thesis (PDF)](Murugesu_2025_HybridLikelihood.pdf)
 
 ---
 
-## Repository structure
+## Research Question
+
+Can blending the Whittle and FDEL likelihoods produce an estimator that is both
+more robust than Whittle and more stable than FDEL in finite samples?
+
+---
+
+## Main Results
+
+The answer is nuanced. Across all seven models studied, the Hybrid estimator
+**collapses to Whittle** as soon as α > 0 — even for very small values like α = 0.05.
+
+Key findings:
+
+- **FDEL is the fragile component.** In small samples (T = 50) under heavy-tailed,
+  skewed, or heteroskedastic innovations, FDEL exhibits inflated variance and large
+  RMSE. Whittle remains stable throughout.
+
+- **The Hybrid stabilises FDEL, not the reverse.** Even a tiny Whittle weight is
+  enough to regularise the estimator. There is no smooth interpolation — the RMSE
+  surface drops sharply at α = 0 and stays flat for all α > 0.
+
+- **Hybrid marginally outperforms Whittle in the worst cases.** Small but consistent
+  gains appear at T = 50 under ARCH(1) volatility, skewed innovations, or long memory.
+  These gains vanish as T grows.
+
+- **Additive outliers affect all three estimators equally.** The dominant effect is
+  systematic bias, not variance — none of the three approaches is robust to gross
+  contamination.
+
+- **Under model misspecification**, the Hybrid tracks Whittle in spectral distance,
+  while FDEL produces substantially larger spectral errors, especially in small samples.
+
+---
+
+## Results Summary (AR(1), φ₀ = 0.4, T = 50)
+
+Representative RMSE across innovation distributions. Lower is better.
+
+| Innovation | Whittle | FDEL   | Hybrid (oracle α) |
+|------------|---------|--------|-------------------|
+| N(0,1)     | 0.1401  | 0.2894 | 0.1401            |
+| t₅         | 0.1418  | 0.3104 | 0.1417            |
+| χ²(5)      | 0.1397  | 0.3111 | 0.1397            |
+| Exp(1)     | 0.1409  | 0.3201 | 0.1394            |
+
+The Hybrid matches or marginally beats Whittle in all cases. FDEL is 2–3× worse.
+
+---
+
+## Simulation Design
+
+Seven data-generating processes:
+
+- **AR(1)** — φ₀ = 0.4, four innovation distributions
+- **ARMA(1,1)** — (φ₀, θ₀) = (0.2, 0.4), four innovation distributions
+- **ARFIMA(1, d, 0)** — d ∈ {0.1, 0.4}, long-range dependence
+- **AR(1)–ARCH(1)** — conditional heteroskedasticity, (α₀, α₁) = (0.5, 0.4)
+- **AR(1) + Additive Outliers** — 5% contamination, spike sd = 5
+- **AR(1) with split-t innovations** — ν = 5, a = 1.6, b = 0.8 (skewed heavy-tailed)
+- **AR(2) DGM → AR(1) fit** — model misspecification, evaluated via spectral distance
+
+Sample sizes: T ∈ {50, 75, 100, 200, 300}. Replications: 1 000.  
+Alpha grid: seq(0, 1, by = 0.05). Oracle tuning: α* minimises Monte Carlo RMSE.
+
+---
+
+## Repository Structure
 
 ```
 .
+├── Murugesu_2025_HybridLikelihood.pdf   Full thesis
+│
 ├── R/
-│   ├── 01_core_estimators.R   # Periodogram, spectral density, Whittle/FDEL/Hybrid
-│   ├── 02_dgm.R               # All data-generating mechanisms
-│   ├── 03_drivers.R           # Monte Carlo simulation drivers (one per model)
-│   └── 04_summary_tables.R    # Summary statistics + LaTeX table generation
+│   ├── 01_core_estimators.R   Periodogram, spectral density, Whittle / FDEL / Hybrid objectives
+│   ├── 02_dgm.R               All data-generating mechanisms
+│   ├── 03_drivers.R           Monte Carlo simulation drivers (one per model class)
+│   └── 04_summary_tables.R    Summary statistics and LaTeX table generation
 │
 ├── simulations/
-│   ├── 01_sim_ar1.Rmd         # AR(1) study
-│   ├── 02_sim_arma11.Rmd      # ARMA(1,1) study
-│   ├── 03_sim_arfima.Rmd      # ARFIMA(1,d,0) study
-│   ├── 04_sim_arch1.Rmd       # AR(1)–ARCH(1) study
-│   ├── 05_sim_ar1_ao.Rmd      # AR(1) + additive outliers
-│   ├── 06_sim_ar1_skewt.Rmd   # AR(1) with split-t innovations
-│   └── 07_sim_ar2_misspec.Rmd # AR(2) DGM → AR(1) fit (misspecification)
+│   ├── 01_sim_ar1.Rmd
+│   ├── 02_sim_arma11.Rmd
+│   ├── 03_sim_arfima.Rmd
+│   ├── 04_sim_arch1.Rmd
+│   ├── 05_sim_ar1_ao.Rmd
+│   ├── 06_sim_ar1_skewt.Rmd
+│   └── 07_sim_ar2_misspec.Rmd
 │
-└── outputs/                   # .rds result files (gitignored, generated on first run)
+└── outputs/                   Generated .rds files — gitignored, created on first run
 ```
 
 ---
 
-## Reproducibility
+## Reproducing the Results
 
-All simulations use `set.seed(2025)` and 1 000 Monte Carlo replications.
-Results are cached as `.rds` files in `outputs/`. Each Rmd checks whether
-the cache exists and skips the (slow) simulation if it does:
+**Dependencies**
 
 ```r
-if (file.exists(rds_file)) {
-  results <- readRDS(rds_file)
-} else {
-  # run simulation and saveRDS(results, rds_file)
-}
+install.packages(c("pracma", "here", "knitr", "rmarkdown"))
 ```
 
-To reproduce from scratch, delete the relevant `.rds` file(s) in `outputs/`
-and re-knit the corresponding Rmd.
+**Open the project**
 
-> **Runtime note.** Full reproduction of all simulations can take several hours
-> on a single core. All drivers support `ncores > 1` via `parallel::mclapply`
-> (macOS / Linux). Set `ncores <- 1` on Windows.
+Double-click `thesis_repo.Rproj` in RStudio. This sets the working directory correctly.
 
----
-
-## Dependencies
-
-```r
-install.packages(c(
-  "parallel",   # parallel computation (base package on most systems)
-  "pracma",     # trapezoidal integration (spectral_distance)
-  "here",       # project-relative paths
-  "knitr",      # knitting Rmd files
-  "rmarkdown"   # knitting Rmd files
-))
-```
-
-The `here` package requires that you work from the project root (where this
-`README.md` is located). Open the `.Rproj` file if using RStudio.
-
----
-
-## Running the simulations
-
-From R (or RStudio), knit each file in order:
-
-```r
-library(rmarkdown)
-
-render("simulations/01_sim_ar1.Rmd")
-render("simulations/02_sim_arma11.Rmd")
-render("simulations/03_sim_arfima.Rmd")
-render("simulations/04_sim_arch1.Rmd")
-render("simulations/05_sim_ar1_ao.Rmd")
-render("simulations/06_sim_ar1_skewt.Rmd")
-render("simulations/07_sim_ar2_misspec.Rmd")
-```
-
-Or source only the R scripts to re-run simulations without producing HTML:
+**Run a simulation** (example: AR(1))
 
 ```r
 source("R/01_core_estimators.R")
 source("R/02_dgm.R")
 source("R/03_drivers.R")
-source("R/04_summary_tables.R")
+
+set.seed(2025)
+res <- run_hybrid_grid_ar1(
+  n = 50, nsim = 1000, phi_true = 0.4,
+  alpha_grid = seq(0, 1, by = 0.05),
+  innov = "exp1"
+)
 ```
 
----
+**Or knit the full report**
 
-## Key design parameters (thesis values)
+```r
+rmarkdown::render("simulations/01_sim_ar1.Rmd")
+```
 
-| Model           | phi_true | theta_true | d    | n_values               | nsim |
-|-----------------|----------|------------|------|------------------------|------|
-| AR(1)           | 0.4      | —          | —    | 50, 75, 100, 200, 300  | 1000 |
-| ARMA(1,1)       | 0.2      | 0.4        | —    | 50, 75, 100, 200, 300  | 1000 |
-| ARFIMA(1,d,0)   | 0.4      | —          | 0.1, 0.4 | 50, 75, 100, 200, 300 | 1000 |
-| AR(1)–ARCH(1)   | 0.4      | —          | —    | 50, 75, 100, 200, 300  | 1000 |
-| AR(1) + AO      | 0.4      | —          | —    | 50, 75, 100, 200        | 1000 |
-| AR(1) split-t   | 0.4      | —          | —    | 50, 75, 100, 200, 300  | 1000 |
-| AR(2) → AR(1)   | (0.6, −0.3) | —       | —    | 50, 75, 100, 200, 300  | 1000 |
+Results are cached as `.rds` files in `outputs/`. Subsequent runs load the cache
+instantly. To rerun from scratch, delete the relevant `.rds` file.
 
-ARCH(1) parameters: (α₀, α₁) = (0.5, 0.4).  
-Additive outliers: 5% contamination, shock sd = 5.  
-Split-t: ν = 5, a = 1.6, b = 0.8.
+> Runtime: approximately 10–30 minutes per Rmd on a single core.  
+> Multi-core supported on Mac/Linux via `ncores = detectCores() - 1`.
 
 ---
 
-## Code organisation notes
+## Methods
 
-The original single-file `Thesis_functions.R` had several redundancies that
-have been resolved in this version:
+The estimators are all built on the same **spectral estimating function**:
 
-- `rmse()` was defined four times — now defined once in `01_core_estimators.R`
-- `estimate_hybrid_once()` was defined twice — now defined once
-- `solve_xi()` and `solve_xi_scalar()` were identical — unified as `solve_xi()`
-- `simulate_ar2()` and `simulate_ar1_ao()` (old versions) duplicated newer
-  generic variants — removed, only the generic `*_innov()` variants remain
-- The `one_rep` / `run_hybrid_grid_*` pattern was copy-pasted six times —
-  factored into shared internal helpers `.run_reps()`, `.collect_results()`,
-  and `.hybrid_over_grid()` in `03_drivers.R`
+ψⱼ(θ) = (I(λⱼ) / f(λⱼ; θ) − 1) · ∇θ log f(λⱼ; θ)
+
+- **Whittle** imposes these as an M-estimation criterion
+- **FDEL** enforces them as empirical moment constraints (Monti, 1997)
+- **Hybrid** combines both objectives via convex weighting
+
+The shared structure is what makes the hybrid construction natural —
+both methods live in the same frequency-domain estimating-equation framework.
 
 ---
 
-## Citation
+## Key References
 
-Murugesu, A. (2025). *Hybrid Likelihood Methods in the Frequency Domain for
-Time Series Estimation*. Master Thesis, University of Geneva.
+- Whittle, P. (1953). The analysis of multiple stationary time series. *JRSS-B*, 15, 125–139.
+- Monti, A.C. (1997). Empirical likelihood confidence regions in time series. *Biometrika*, 84(2), 395–405.
+- Hjort, N.L., McKeague, I.W., and Van Keilegom, I. (2018). Hybrid combinations of parametric and empirical likelihoods. *JRSS-B*, 80(2), 317–352.
+- Dæhlen, I. and Hjort, N.L. (2024). Model-robust hybrid likelihood. *arXiv preprint*.
+
+---
+
+## Author
+
+Akshaan Murugesu  
+MSc Statistics — University of Geneva  
+Supervisors: Prof. Davide La Vecchia and Manon Felix  
+November 2025

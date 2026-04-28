@@ -38,6 +38,7 @@ phi_true    <- 0.4
 n_values    <- c(50, 75, 100, 200, 300)
 alpha_grid  <- seq(0, 1, by = 0.05)
 innovations <- c("gaussian", "t5", "chisq5", "exp1")
+dir.create(here::here("outputs"), showWarnings = FALSE, recursive = TRUE)
 rds_file    <- here::here("outputs", "results_hybrid_study_ar1.rds")
 ```
 
