@@ -83,7 +83,7 @@ Seven data-generating processes:
 - **AR(1) with split-t innovations** — ν = 5, a = 1.6, b = 0.8 (skewed heavy-tailed)
 - **AR(2) DGM → AR(1) fit** — model misspecification, evaluated via spectral distance
 
-Sample sizes: T ∈ {50, 75, 100, 200, 300}. Replications: 1 000.  
+Sample sizes: T ∈ {50, 75, 100, 200, 300}. Replications: 1 000.
 Alpha grid: seq(0, 1, by = 0.05). Oracle tuning: α* minimises Monte Carlo RMSE.
 
 ---
@@ -150,7 +150,7 @@ rmarkdown::render("simulations/01_sim_ar1.Rmd")
 Results are cached as `.rds` files in `outputs/`. Subsequent runs load the cache
 instantly. To rerun from scratch, delete the relevant `.rds` file.
 
-> Runtime: approximately 10–30 minutes per Rmd on a single core.  
+> Runtime: approximately 10–30 minutes per Rmd on a single core.
 > Multi-core supported on Mac/Linux via `ncores = detectCores() - 1`.
 
 ---
@@ -179,9 +179,15 @@ both methods live in the same frequency-domain estimating-equation framework.
 
 ---
 
+## AI Usage
+
+AI tools (Claude, ChatGPT) were used to assist with code organisation, refactoring, and documentation. All statistical methods, simulation design, and interpretations are entirely my own.
+
+---
+
 ## Author
 
-Akshaan Murugesu  
-MSc Statistics — University of Geneva  
-Supervisors: Prof. Davide La Vecchia and Manon Felix  
+Akshaan Murugesu
+MSc Statistics — University of Geneva
+Supervisors: Prof. Davide La Vecchia and Manon Felix
 November 2025
